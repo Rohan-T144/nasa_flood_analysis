@@ -71,8 +71,10 @@ parser.add_argument('-c', '--config', default='flood.yml', type=str, metavar='FI
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 
+parent_folder = os.path.dirname(os.path.dirname(__file__))
+print(parent_folder)
 # Dataset / Model parameters
-parser.add_argument('-data-dir', metavar='DIR',default='/Users/aravdhoot/nasa_flood_analysis/Track2/',
+parser.add_argument('-data-dir', metavar='DIR',default=f'{parent_folder}/Track2/',
                     help='path to dataset')
 parser.add_argument('--dataset', '-d', metavar='NAME', default='torch/cifar10',
                     help='dataset type (default: ImageFolder/ImageTar if empty)')
