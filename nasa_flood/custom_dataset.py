@@ -5,12 +5,19 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 class CustomDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
+    def __init__(self, root_dir, transform=None, flag=None):
         self.root_dir = root_dir
         self.transform = transform
         self.image_dir = os.path.join(root_dir, 'images')
         self.label_dir = os.path.join(root_dir, 'labels')
         self.image_filenames = sorted([f for f in os.listdir(self.image_dir) if f.endswith('.tif')])
+        self.flag = flag
+
+        # if train or val flag given, use first 80% for train and last 20% for val
+        if self.flag == "train":
+            self.image_filenames = self.image_filenames[:int(len(self.image_filenames) * 0.8)]
+        elif self.flag=="val":
+            self.image_filenames = self.image_filenames[int(len(self.image_filenames) * 0.8):]
 
     def __len__(self):
         return len(self.image_filenames)

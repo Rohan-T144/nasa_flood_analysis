@@ -71,10 +71,9 @@ parser.add_argument('-c', '--config', default='flood.yml', type=str, metavar='FI
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 
-parent_folder = os.path.dirname(os.path.dirname(__file__))
-print(parent_folder)
+repo_folder = os.path.dirname(os.path.dirname(__file__))
 # Dataset / Model parameters
-parser.add_argument('-data-dir', metavar='DIR',default=f'{parent_folder}/Track2/',
+parser.add_argument('-data-dir', metavar='DIR',default=f'{repo_folder}/Track2/',
                     help='path to dataset')
 parser.add_argument('--dataset', '-d', metavar='NAME', default='torch/cifar10',
                     help='dataset type (default: ImageFolder/ImageTar if empty)')
@@ -503,8 +502,11 @@ def main():
         transforms.Normalize(mean=data_config['mean'], std=data_config['std']),
     ])
 
-    dataset_train = CustomDataset(root_dir=os.path.join(args.data_dir, args.train_split), transform=transform_train)
-    dataset_eval = CustomDataset(root_dir=os.path.join(args.data_dir, args.val_split), transform=transform_eval)
+    dataset_train = CustomDataset(root_dir=os.path.join(args.data_dir, args.train_split), transform=transform_train, flag="train")
+    dataset_eval = CustomDataset(root_dir=os.path.join(args.data_dir, args.train_split), transform=transform_eval, flag="val")
+    #dataset_eval = CustomDataset(root_dir=os.path.join(args.data_dir, args.val_split), transform=transform_eval)
+    print(f"Training set images: {len(dataset_train)}")
+    print(f"Validation set images: {len(dataset_eval)}")
 
 
     # setup mixup / cutmix
@@ -809,8 +811,8 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                         loss=losses_m, top1=top1_m, top5=top5_m))
 
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
-
     return metrics
+    
 
 
 if __name__ == '__main__':
