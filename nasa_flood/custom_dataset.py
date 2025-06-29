@@ -10,7 +10,7 @@ class CustomDataset(Dataset):
         self.transform = transform
         self.image_dir = os.path.join(root_dir, 'images')
         self.label_dir = os.path.join(root_dir, 'labels')
-        self.image_filenames = sorted([f for f in os.listdir(self.image_dir) if f.endswith('.tif')])
+        self.image_filenames = sorted([f for f in os.listdir(self.image_dir) if f.endswith('.tif')], key=lambda name : int(name[:-4])) #sort by increasing numbers
         self.flag = flag
 
         # if train or val flag given, use first 80% for train and last 20% for val
