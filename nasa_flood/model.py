@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from spikingjelly.clock_driven.neuron import MultiStepLIFNode
-from timm.models.layers import to_2tuple, trunc_normal_, DropPath
+#rom timm.models.layers import to_2tuple, trunc_normal_, DropPath
+from timm.layers import to_2tuple, trunc_normal_, DropPath
 from timm.models.registry import register_model
 from timm.models.vision_transformer import _cfg
 import torch.nn.functional as F
