@@ -1,0 +1,11 @@
+[project]
+name = "nasa-flood-analysis"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "scikit-image>=0.25.2",
+    "spikingjelly>=0.0.0.0.14",
+    "torch>=2.7.1",
+]
