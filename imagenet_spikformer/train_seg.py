@@ -36,8 +36,9 @@ from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCro
 from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
-import model
-from custom_dataset import CustomDataset
+import model_seg
+from custom_dataset import CustomDatasetSeg
+from utils import DiceLoss, calculate_iou
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as ApexDDP
@@ -73,7 +74,7 @@ parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 
 repo_folder = os.path.dirname(os.path.dirname(__file__))
 # Dataset / Model parameters
-parser.add_argument('-data-dir', metavar='DIR',default=f'{repo_folder}/Track2/',
+parser.add_argument('-data-dir', metavar='DIR',default=f'{repo_folder}/flood_data/',
                     help='path to dataset')
 parser.add_argument('--dataset', '-d', metavar='NAME', default='torch/cifar10',
                     help='dataset type (default: ImageFolder/ImageTar if empty)')
@@ -270,8 +271,8 @@ parser.add_argument('--output', default='', type=str, metavar='PATH',
                     help='path to output folder (default: none, current dir)')
 parser.add_argument('--experiment', default='', type=str, metavar='NAME',
                     help='name of train experiment, name of sub-folder for output')
-parser.add_argument('--eval-metric', default='top1', type=str, metavar='EVAL_METRIC',
-                    help='Best metric (default: "top1"')
+parser.add_argument('--eval-metric', default='iou', type=str, metavar='EVAL_METRIC',
+                    help='Best metric (default: "iou"')
 parser.add_argument('--tta', type=int, default=0, metavar='N',
                     help='Test/inference time augmentation (oversampling) factor. 0=None (default: 0)')
 parser.add_argument("--local_rank", default=0, type=int)
@@ -366,7 +367,7 @@ def main():
 
     random_seed(args.seed, args.rank)
     model = create_model(
-        'spikformer',
+        'spikformer_segmentation',
         pretrained=False,
         drop_rate=0.,
         drop_path_rate=0.2,
@@ -380,7 +381,7 @@ def main():
         assert hasattr(model, 'num_classes'), 'Model must have `num_classes` attr if not set on cmd line/config.'
         args.num_classes = model.num_classes  # FIXME handle model default vs config num_classes more elegantly
 
-    args.num_classes = 2
+    args.num_classes = 1
 
     if args.local_rank == 0:
         _logger.info(
@@ -455,7 +456,6 @@ def main():
             load_checkpoint(model_ema.module, args.resume, use_ema=True)
 
     # setup distributed training
-    # setup distributed training
     if args.distributed:
         if has_apex and use_amp != 'native':
             # Apex DDP preferred unless native amp is activated
@@ -484,6 +484,8 @@ def main():
 
     # create the train and eval datasets
     from torchvision import transforms
+    #import torchvision.transforms.v2 as transforms
+
     
     data_config['input_size'] = args.input_size or data_config.get('input_size') or (3, 224, 224)
 
@@ -495,15 +497,25 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize(mean=data_config['mean'], std=data_config['std']),
     ])
+    mask_transform_train = transforms.Compose([
+        transforms.Resize(data_config['input_size'][1:], interpolation=transforms.InterpolationMode.NEAREST),
+        transforms.RandomHorizontalFlip(),
+        #transforms.ToTensor(), ToTensor not meant for masks, conversion to tensor done in CustomDatasetSeg
+    ])
     
     transform_eval = transforms.Compose([
         transforms.Resize(data_config['input_size'][1:]),
         transforms.ToTensor(),
         transforms.Normalize(mean=data_config['mean'], std=data_config['std']),
     ])
+    mask_transform_eval = transforms.Compose([
+        transforms.Resize(data_config['input_size'][1:], interpolation=transforms.InterpolationMode.NEAREST),
+        #transforms.ToTensor(), ToTensor not meant for masks, conversion to tensor done in CustomDatasetSeg
+    ])
 
-    dataset_train = CustomDataset(root_dir=os.path.join(args.data_dir, args.train_split), transform=transform_train, flag="train")
-    dataset_eval = CustomDataset(root_dir=os.path.join(args.data_dir, args.train_split), transform=transform_eval, flag="val")
+
+    dataset_train = CustomDatasetSeg(root_dir=os.path.join(args.data_dir, args.train_split), transform=transform_train, mask_transform = mask_transform_train, flag="train")
+    dataset_eval = CustomDatasetSeg(root_dir=os.path.join(args.data_dir, args.train_split), transform=transform_eval, mask_transform = mask_transform_eval, flag="val")
     #dataset_eval = CustomDataset(root_dir=os.path.join(args.data_dir, args.val_split), transform=transform_eval)
     print(f"Training set images: {len(dataset_train)}")
     print(f"Validation set images: {len(dataset_eval)}")
@@ -552,17 +564,8 @@ def main():
     )
 
     # setup loss function
-    if args.jsd:
-        assert num_aug_splits > 1  # JSD only valid with aug splits set
-        train_loss_fn = JsdCrossEntropy(num_splits=num_aug_splits, smoothing=args.smoothing).cuda()
-    elif mixup_active:
-        # smoothing is handled with mixup target transform
-        train_loss_fn = SoftTargetCrossEntropy().cuda()
-    elif args.smoothing:
-        train_loss_fn = LabelSmoothingCrossEntropy(smoothing=args.smoothing).cuda()
-    else:
-        train_loss_fn = nn.CrossEntropyLoss().cuda()
-    validate_loss_fn = nn.CrossEntropyLoss().cuda()
+    train_loss_fn = DiceLoss().cuda() 
+    validate_loss_fn = DiceLoss().cuda()
 
     # setup checkpoint saver and eval metric tracking
     eval_metric = args.eval_metric
@@ -579,7 +582,7 @@ def main():
                 safe_model_name(args.model),
                 str(data_config['input_size'][-1])
             ])
-        output_dir = get_outdir(args.output if args.output else './output/train', exp_name)
+        output_dir = get_outdir(args.output if args.output else './seg_output/train', exp_name)
         decreasing = True if eval_metric == 'loss' else False
         saver = CheckpointSaver(
             model=model, optimizer=optimizer, args=args, model_ema=model_ema, amp_scaler=loss_scaler,
@@ -751,8 +754,7 @@ def train_one_epoch(
 def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix=''):
     batch_time_m = AverageMeter()
     losses_m = AverageMeter()
-    top1_m = AverageMeter()
-    top5_m = AverageMeter()
+    iou_m = AverageMeter()
 
     model.eval()
 
@@ -769,19 +771,19 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
 
             with amp_autocast():
                 output = model(input)
-            if isinstance(output, (tuple, list)):
-                output = output[0]
+            # if isinstance(output, (tuple, list)):
+            #     output = output[0]
 
-            # augmentation reduction
-            reduce_factor = args.tta
-            if reduce_factor > 1:
-                output = output.unfold(0, reduce_factor, reduce_factor).mean(dim=2)
-                target = target[0:target.size(0):reduce_factor]
+            # # augmentation reduction
+            # reduce_factor = args.tta
+            # if reduce_factor > 1:
+            #     output = output.unfold(0, reduce_factor, reduce_factor).mean(dim=2)
+            #     target = target[0:target.size(0):reduce_factor]
 
             loss = loss_fn(output, target)
             functional.reset_net(model)
 
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            iou = calculate_iou(output, target, args.num_classes)
 
             if args.distributed:
                 reduced_loss = reduce_tensor(loss.data, args.world_size)
@@ -794,8 +796,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                 torch.cuda.synchronize()
 
             losses_m.update(reduced_loss.item(), input.size(0))
-            top1_m.update(acc1.item(), output.size(0))
-            top5_m.update(acc5.item(), output.size(0))
+            iou_m.update(iou.item(), output.size(0))
 
             batch_time_m.update(time.time() - end)
             end = time.time()
@@ -805,12 +806,11 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                     '{0}: [{1:>4d}/{2}]  '
                     'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})  '
                     'Loss: {loss.val:>7.4f} ({loss.avg:>6.4f})  '
-                    'Acc@1: {top1.val:>7.4f} ({top1.avg:>7.4f})  '
-                    'Acc@5: {top5.val:>7.4f} ({top5.avg:>7.4f})'.format(
+                    'IoU: {iou.val:>7.4f} ({iou.avg:>7.4f})'.format(
                         log_name, batch_idx, last_idx, batch_time=batch_time_m,
-                        loss=losses_m, top1=top1_m, top5=top5_m))
+                        loss=losses_m, iou=iou_m))
 
-    metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
+    metrics = OrderedDict([('loss', losses_m.avg), ('iou', iou_m.avg)])
     return metrics
     
 
