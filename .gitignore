@@ -1,2 +1,7 @@
 __pycache__
 .venv
+.DS_Store
+manim/media/
+manim/.DS_Store
+manim/__pycache__/
+manim/media/
