@@ -13,10 +13,10 @@ class SpikingDoubleConv(nn.Module):
         self.double_conv = nn.Sequential(
             layer.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
             layer.BatchNorm2d(mid_channels),
-            neuron.LIFNode(),
+            neuron.LIFNode(v_threshold=1.0), 
             layer.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
             layer.BatchNorm2d(out_channels),
-            neuron.LIFNode()
+            neuron.LIFNode(v_threshold=1.0)
         )
 
     def forward(self, x):
@@ -201,7 +201,7 @@ class SpikingUNet(nn.Module):
         self.final_lif = neuron.LIFNode()
 
 
-    def forward(self, x):
+    def forward(self, x, return_spikes=False):
         # x shape: [N, C, H, W]
         # Convert static input to a sequence of spikes over T timesteps
         # x is repeated T times along a new dimension
@@ -233,6 +233,11 @@ class SpikingUNet(nn.Module):
         
         # Final 1x1 convolution
         logits = self.outc(potential_sum)
+
+        if return_spikes:
+            # Return a dictionary of key spike trains for analysis
+            spike_outputs = {'x1': x1, 'x2': x2, 'x3': x3, 'x4': x4, 'x5': x5, 'up_out': x}
+            return torch.sigmoid(logits), spike_outputs
         
         # Apply sigmoid for binary segmentation
         return torch.sigmoid(logits)

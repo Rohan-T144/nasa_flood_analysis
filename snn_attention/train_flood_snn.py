@@ -35,7 +35,7 @@ class FloodDataset(Dataset):
         self.img_dir = img_dir
         self.mask_dir = mask_dir
         self.transform = transform
-        self.img_files = sorted([f for f in os.listdir(img_dir) if f.endswith('.tif')])
+        self.img_files = sorted([f for f in os.listdir(self.img_dir) if f.endswith('.tif')], key=lambda name : int(name[:-4]))
 
     def __len__(self):
         return len(self.img_files)
@@ -61,7 +61,8 @@ class FloodDataset(Dataset):
             mask_path = os.path.join(self.mask_dir, self.img_files[idx].replace('.tif', '.png'))
             if os.path.exists(mask_path):
                 mask = io.imread(mask_path).astype(np.float32)
-                mask = mask / 255.0  # Normalize to [0, 1]
+                # ensure values strictly 0 or 1
+                mask = (mask > 0).astype(np.float32)
                 mask = mask[np.newaxis, :, :]  # Add channel dim [1, H, W]
             else:
                 mask = np.zeros((1, image.shape[1], image.shape[2]), dtype=np.float32)
@@ -109,8 +110,9 @@ def train_model(args):
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
     # Load checkpoint if it exists
-    # checkpoint_path = os.path.join(args.save_dir, "checkpoint.pth")   
-    checkpoint_path = os.path.join(args.save_dir, "snn_unet_best.pth")
+    checkpoint_path = os.path.join(args.save_dir, "checkpoint.pth")   
+    # checkpoint_path = os.path.join(args.save_dir, "snn_unet_best.pth")
+    # checkpoint_path = os.path.join(args.save_dir, "spike_unet_former_checkpoint.pth")
     if args.resume and os.path.exists(checkpoint_path):
         print(f"Loading checkpoint from {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -136,6 +138,25 @@ def train_model(args):
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     os.makedirs(args.save_dir, exist_ok=True)
+    
+    # THIS IS FOR ADDING POS_WEIGHT TO BCE LOSS, NOT YET IMPLEMENTED
+    # WOULD NEED TO CHANGE MODEL TO OUTPUT LOGITS AND USE BCEWITHLOGITS
+
+    # Add this before your training loop
+    num_non_flood_pixels = 0
+    num_flood_pixels = 0
+    # Use your training data loader to iterate through the masks
+    for _, mask in train_loader:
+        num_non_flood_pixels += (mask == 0).sum().item()
+        num_flood_pixels += (mask == 1).sum().item()
+    print(num_non_flood_pixels, num_flood_pixels)
+    # The weight is the ratio of negatives to positives
+    pos_weight = num_non_flood_pixels / num_flood_pixels
+    print(f"Calculated positive class weight: {pos_weight:.2f}")
+
+    # Convert it to a tensor for the loss function
+    pos_weight_tensor = torch.tensor([pos_weight], device=device)
+
 
     # --- Training Loop ---
     for epoch in range(start_epoch, args.epochs):
@@ -152,10 +173,41 @@ def train_model(args):
             
             # --- SNN Forward Pass ---
             # The model's forward pass handles the timesteps internally
-            outputs = model(images)
+            # outputs = model(images)
+
+            if (batch_idx + 1) % 10 == 0:
+                outputs, spike_outputs = model(images, return_spikes=True)
+
+                print("--- Layer-wise Spike Rate Analysis ---")
+                def print_spike_rate(tensor, name="Layer"):
+                    # tensor shape: [T, Batch, Channels, H, W]
+                    num_spikes = torch.sum(tensor > 0).item()
+                    num_neurons = tensor.numel() / tensor.shape[0] # Total neurons in the batch
+                    avg_spikes_per_neuron = num_spikes / num_neurons
+                    
+                    # Firing rate as a percentage of timesteps
+                    firing_rate_percent = (avg_spikes_per_neuron / tensor.shape[0]) * 100
+                    
+                    print(f"{name}: Avg Spikes/Neuron = {avg_spikes_per_neuron:.4f} | Firing Rate = {firing_rate_percent:.2f}%")
+                for name, spikes in spike_outputs.items():
+                    print_spike_rate(spikes.detach(), name=name)
+            else:
+                outputs = model(images)
             
-            loss = bce_dice_loss(outputs, masks)
+            loss = bce_dice_loss(outputs, masks, bce_weight=0.5)
             loss.backward()
+
+            # --- Gradient Check ---
+            total_norm = 0
+            for p in model.parameters():
+                if p.grad is not None:
+                    param_norm = p.grad.data.norm(2)
+                    total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** 0.5
+            if (batch_idx + 1) % 10 == 0:
+                print(f"Gradient Norm: {total_norm:.4f}")
+            # --- End Gradient Check ---
+
             optimizer.step()
             
             # --- SNN Reset ---
@@ -328,7 +380,8 @@ if __name__ == "__main__":
             print(f"Error: Model path not found at {args.model_path}")
         else:
             model = SpikingUNet(n_channels=12, n_classes=1, T=args.timesteps)
-            model.load_state_dict(torch.load(args.model_path, map_location=device))
+            checkpoint = torch.load(args.model_path, map_location=device)
+            model.load_state_dict(checkpoint)
             model.to(device)
             print(f"Loaded model from {args.model_path}")
             test_model(model, args)
