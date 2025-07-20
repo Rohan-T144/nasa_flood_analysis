@@ -130,32 +130,43 @@ def train_model(args):
         mask_dir=os.path.join(args.data_dir, 'train', 'labels')
     )
     
-    train_size = int(0.8 * len(train_dataset_full))
-    val_size = len(train_dataset_full) - train_size
-    train_dataset, val_dataset = torch.utils.data.random_split(train_dataset_full, [train_size, val_size])
+    # train_size = int(0.8 * len(train_dataset_full))
+    # val_size = len(train_dataset_full) - train_size
+    train_size = 0.7
+    val_size = 0.15
+    test_size = 0.15
+
+    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+        train_dataset_full, 
+        [train_size, val_size, test_size],
+        generator = torch.Generator().manual_seed(0)
+    )
     
+    os.makedirs("dataloaders", exist_ok=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    torch.save(test_loader, "dataloaders/testloader.pt")
 
     os.makedirs(args.save_dir, exist_ok=True)
     
     # THIS IS FOR ADDING POS_WEIGHT TO BCE LOSS, NOT YET IMPLEMENTED
     # WOULD NEED TO CHANGE MODEL TO OUTPUT LOGITS AND USE BCEWITHLOGITS
 
-    # Add this before your training loop
-    num_non_flood_pixels = 0
-    num_flood_pixels = 0
-    # Use your training data loader to iterate through the masks
-    for _, mask in train_loader:
-        num_non_flood_pixels += (mask == 0).sum().item()
-        num_flood_pixels += (mask == 1).sum().item()
-    print(num_non_flood_pixels, num_flood_pixels)
-    # The weight is the ratio of negatives to positives
-    pos_weight = num_non_flood_pixels / num_flood_pixels
-    print(f"Calculated positive class weight: {pos_weight:.2f}")
+    # # Add this before your training loop
+    # num_non_flood_pixels = 0
+    # num_flood_pixels = 0
+    # # Use your training data loader to iterate through the masks
+    # for _, mask in train_loader:
+    #     num_non_flood_pixels += (mask == 0).sum().item()
+    #     num_flood_pixels += (mask == 1).sum().item()
+    # print(num_non_flood_pixels, num_flood_pixels)
+    # # The weight is the ratio of negatives to positives
+    # pos_weight = num_non_flood_pixels / num_flood_pixels
+    # print(f"Calculated positive class weight: {pos_weight:.2f}")
 
-    # Convert it to a tensor for the loss function
-    pos_weight_tensor = torch.tensor([pos_weight], device=device)
+    # # Convert it to a tensor for the loss function
+    # pos_weight_tensor = torch.tensor([pos_weight], device=device)
 
 
     # --- Training Loop ---
@@ -194,7 +205,7 @@ def train_model(args):
             else:
                 outputs = model(images)
             
-            loss = bce_dice_loss(outputs, masks, bce_weight=0.5)
+            loss = bce_dice_loss(outputs, masks)
             loss.backward()
 
             # --- Gradient Check ---
@@ -290,19 +301,24 @@ def train_model(args):
     return model
 
 def test_model(model, args):
-    test_dataset = FloodDataset(
-        img_dir=os.path.join(args.data_dir, 'train', 'images'),
-        mask_dir=os.path.join(args.data_dir, 'train', 'labels'),
-    )
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+    # test_dataset = FloodDataset(
+    #     img_dir=os.path.join(args.data_dir, 'train', 'images'),
+    #     mask_dir=os.path.join(args.data_dir, 'train', 'labels'),
+    # )
+    # test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+    test_loader = torch.load("dataloaders/testloader.pt", weights_only=False)
 
     model.eval()
     os.makedirs(args.output_dir, exist_ok=True)
 
+    test_loss = 0.0
+    test_dice = 0.0
+
     with torch.no_grad():
         for idx, (images, masks) in enumerate(test_loader):
-            if idx >= args.num_visualizations:
-                break
+            # if idx >= args.num_visualizations:
+            #     break
             
             images = images.to(device)
             masks = masks.to(device)
@@ -313,38 +329,49 @@ def test_model(model, args):
             # Reset after each inference
             functional.reset_net(model)
 
-            # Visualization logic (same as your original script)
-            image = images.cpu().numpy()[0]
-            pred = outputs.cpu().numpy()[0, 0]
-            mask = masks.cpu().numpy()[0, 0]
-            binary_pred = binary_preds.cpu().numpy()[0, 0]
-            
-            rgb_image = np.stack([image[3], image[2], image[1]], axis=2) # False color
-            rgb_image = np.clip(rgb_image, 0, 1)
-            
-            fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-            axes[0].imshow(rgb_image)
-            axes[0].set_title("False Color Image (B4,B3,B2)")
-            axes[0].axis('off')
-            
-            axes[1].imshow(mask, cmap='Blues')
-            axes[1].set_title("Ground Truth")
-            axes[1].axis('off')
-            
-            axes[2].imshow(pred, cmap='plasma', vmin=0, vmax=1)
-            axes[2].set_title("SNN Prediction (Probability)")
-            axes[2].axis('off')
+            loss = bce_dice_loss(outputs, masks)
+            dice = dice_coefficient(outputs, masks)
+            test_loss += loss.item()
+            test_dice += dice.item()
 
-            axes[3].imshow(binary_pred, cmap='Blues')
-            axes[3].set_title("SNN Binary Prediction")
-            axes[3].axis('off')
-            
-            plt.tight_layout()
-            plt.savefig(os.path.join(args.output_dir, f"snn_prediction_{idx}.png"))
-            plt.close()
+            # if idx*args.batch_size + i < args.num_visualizations:
+            for i in range(len(images)):
+                if idx*args.batch_size + i < args.num_visualizations:
+                    image = images.cpu().numpy()[i]
+                    pred = outputs.cpu().numpy()[i, 0]
+                    mask = masks.cpu().numpy()[i, 0]
+                    binary_pred = binary_preds.cpu().numpy()[i, 0]
+                    
+                    rgb_image = np.stack([image[3], image[2], image[1]], axis=2) # False color
+                    rgb_image = np.clip(rgb_image, 0, 1)
+                    
+                    fig, axes = plt.subplots(1, 4, figsize=(20, 6))
+                    axes[0].imshow(rgb_image)
+                    axes[0].set_title("False Color Image (B4,B3,B2)")
+                    axes[0].axis('off')
+                    
+                    axes[1].imshow(mask, cmap='Blues')
+                    axes[1].set_title("Ground Truth")
+                    axes[1].axis('off')
+                    
+                    axes[2].imshow(pred, cmap='plasma', vmin=0, vmax=1)
+                    axes[2].set_title("SNN Prediction (Probability)")
+                    axes[2].axis('off')
 
-            if (idx + 1) % 10 == 0:
-                print(f"Processed {idx + 1}/{len(test_loader)} test images")
+                    axes[3].imshow(binary_pred, cmap='Blues')
+                    axes[3].set_title("SNN Binary Prediction")
+                    axes[3].axis('off')
+                    
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(args.output_dir, f"snn_prediction_{idx*args.batch_size + i}.png"))
+                    plt.close()
+
+                if (idx*args.batch_size + i) % 10 == 0:
+                    print(f"Processed {idx*args.batch_size + i}/{len(test_loader) * args.batch_size} test images")
+    
+    test_loss /= len(test_loader)
+    test_dice /= len(test_loader)
+    print(f"Test Loss: {test_loss:.4f}, Test Dice: {test_dice:.4f}")
     
     print(f"Testing complete! Predictions saved to {args.output_dir}")
 
@@ -357,14 +384,15 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--timesteps", "-T", type=int, default=4, help="Number of timesteps for SNN simulation")
     parser.add_argument("--save-dir", type=str, default="snn_checkpoints", help="Directory to save models")
-    parser.add_argument("--output-dir", type=str, default="snn_predictions", help="Directory to save predictions")
     parser.add_argument("--num-workers", type=int, default=4, help="Number of workers for data loading")
+    parser.add_argument("--save-every", type=int, default=5, help="Save model every N epochs")
+    parser.add_argument("--resume", action="store_true", help="Resume training from the last checkpoint")
+    
+    parser.add_argument("--output-dir", type=str, default="snn_predictions", help="Directory to save predictions")
     parser.add_argument("--num-visualizations", type=int, default=10, help="Number of predictions to visualize")
     parser.add_argument("--test-only", action="store_true", help="Only run testing, no training")
     parser.add_argument("--model-path", type=str, default="snn_checkpoints/snn_unet_best.pth", help="Path to model for testing")
-    parser.add_argument("--resume", action="store_true", help="Resume training from the last checkpoint")
-    parser.add_argument("--save-every", type=int, default=5, help="Save model every N epochs")
-
+    
     args = parser.parse_args()
     
     if torch.mps.is_available():
