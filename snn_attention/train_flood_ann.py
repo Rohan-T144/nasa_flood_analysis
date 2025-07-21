@@ -2,6 +2,7 @@
 import argparse
 import os
 import time
+import json
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -399,6 +400,10 @@ def test_model(model, args):
     test_loss /= len(test_loader)
     test_dice /= len(test_loader)
     print(f"Test Loss: {test_loss:.4f}, Test Dice: {test_dice:.4f}")
+
+    metrics = {"test loss" : test_loss, "test dice" : test_dice}
+    with open(os.path.join(args.output_dir, "metrics.json"), "w") as json_file:
+        json.dump(metrics, json_file, indent=4)
 
     print(f"Testing complete! Predictions saved to {args.output_dir}")
 
