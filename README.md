@@ -104,7 +104,7 @@ python train_flood_snn.py --data-dir ../flood_data --batch-size 4 --epochs 50 --
 For ANN baseline (U-Net):
 
 ```bash
-python train_flood_ann.py --data-dir ../flood_data --batch-size 4 --epochs 50 --lr 1e-4 --save-dir ann_checkpoints
+python train_flood_ann.py --data-dir ../flood_data --batch-size 4 --epochs 50 --lr 1e-4 --save-dir ann_checkpoints --data-seed 0
 ```
 
 **Key Arguments:**
@@ -114,6 +114,7 @@ python train_flood_ann.py --data-dir ../flood_data --batch-size 4 --epochs 50 --
 - `--lr`: Learning rate
 - `--timesteps`: Number of SNN simulation steps (SNN only)
 - `--save-dir`: Checkpoint directory
+- `--data-seed`: Data split seed for reproducibility, random split if not set
 
 ### Testing and Visualization
 
