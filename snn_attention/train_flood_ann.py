@@ -409,14 +409,16 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs to train")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
-    parser.add_argument("--save-dir", type=str, default="checkpoints", help="Directory to save models")
+    parser.add_argument("--save-dir", type=str, default="ann_checkpoints", help="Directory to save models")
     parser.add_argument("--save-interval", type=int, default=5, help="Save model every N epochs")
-    parser.add_argument("--output-dir", type=str, default="predictions", help="Directory to save predictions")
     parser.add_argument("--num-workers", type=int, default=4, help="Number of workers for data loading")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from")
+
+    parser.add_argument("--output-dir", type=str, default="ann_predictions", help="Directory to save predictions")
     parser.add_argument("--num-visualizations", type=int, default=10, help="Number of predictions to visualize")
     parser.add_argument("--test-only", action="store_true", help="Only run testing, no training")
     parser.add_argument("--model-path", type=str, default=None, help="Path to model for testing")
-    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from")
+    
 
     args = parser.parse_args()
 
