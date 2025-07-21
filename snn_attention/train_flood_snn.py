@@ -136,11 +136,19 @@ def train_model(args):
     val_size = 0.15
     test_size = 0.15
 
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        train_dataset_full, 
-        [train_size, val_size, test_size],
-        generator = torch.Generator().manual_seed(0)
-    )
+    if args.data_seed != None:
+        print(f"Generating data split with seed {args.data_seed}...")
+        train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+            train_dataset_full, 
+            [train_size, val_size, test_size],
+            generator = torch.Generator().manual_seed(args.data_seed),
+        )
+    else:
+        print("Generating random data split...")
+        train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+            train_dataset_full, 
+            [train_size, val_size, test_size],
+        )
     
     os.makedirs("dataloaders", exist_ok=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
@@ -379,6 +387,7 @@ def test_model(model, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Spiking U-Net for flood mapping")
     parser.add_argument("--data-dir", type=str, default="../flood_data", help="Path to data directory")
+    parser.add_argument("--data-seed", type=int, help="Seed to generate a random train/val/test split, random if not set")
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size for training. SNNs are memory intensive.")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs to train")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")

@@ -22,8 +22,7 @@ class FloodDataset(Dataset):
         self.transform = transform
 
         # Get all image files
-        self.img_files = sorted([f for f in os.listdir(img_dir) if f.endswith('.tif')])
-
+        self.img_files = sorted([f for f in os.listdir(self.img_dir) if f.endswith('.tif')], key=lambda name : int(name[:-4]))
     def __len__(self):
         return len(self.img_files)
 
@@ -52,7 +51,7 @@ class FloodDataset(Dataset):
             mask_path = os.path.join(self.mask_dir, self.img_files[idx].replace('.tif', '.png'))
             if os.path.exists(mask_path):
                 mask = io.imread(mask_path).astype(np.float32)
-                mask = mask / 255.0  # Normalize to [0, 1]
+                mask = (mask > 0).astype(np.float32)
                 mask = mask[np.newaxis, :, :]  # Add channel dimension [1, H, W]
             else:
                 # Create dummy mask for test images
@@ -114,28 +113,61 @@ def train_model(args):
 
     model = model.to(device)
 
-    # Create train dataset and dataloader
-    train_dataset = FloodDataset(
+    # # Create train dataset and dataloader
+    # train_dataset = FloodDataset(
+    #     img_dir=os.path.join(args.data_dir, 'train', 'images'),
+    #     mask_dir=os.path.join(args.data_dir, 'train', 'labels')
+    # )
+    
+    # # Create validation dataset and dataloader
+    # val_dataset = FloodDataset(
+    #     img_dir=os.path.join(args.data_dir, 'val', 'images'),
+    #     # Note: validation set has no labels, so we'll use random split from train for validation
+    # )
+    
+    # # Split training data into train and validation sets if no validation labels
+    # if not os.path.exists(os.path.join(args.data_dir, 'val', 'labels')):
+    #     print("No validation labels found. Using split from training data.")
+    #     train_size = int(0.8 * len(train_dataset))
+    #     val_size = len(train_dataset) - train_size
+    #     train_dataset, val_dataset = torch.utils.data.random_split(train_dataset, [train_size, val_size])
+
+    # # Create dataloaders
+    # train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+    # val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+
+    # --- DataLoaders ---
+    train_dataset_full = FloodDataset(
         img_dir=os.path.join(args.data_dir, 'train', 'images'),
         mask_dir=os.path.join(args.data_dir, 'train', 'labels')
     )
     
-    # Create validation dataset and dataloader
-    val_dataset = FloodDataset(
-        img_dir=os.path.join(args.data_dir, 'val', 'images'),
-        # Note: validation set has no labels, so we'll use random split from train for validation
-    )
     
-    # Split training data into train and validation sets if no validation labels
-    if not os.path.exists(os.path.join(args.data_dir, 'val', 'labels')):
-        print("No validation labels found. Using split from training data.")
-        train_size = int(0.8 * len(train_dataset))
-        val_size = len(train_dataset) - train_size
-        train_dataset, val_dataset = torch.utils.data.random_split(train_dataset, [train_size, val_size])
+    # train_size = int(0.8 * len(train_dataset_full))
+    # val_size = len(train_dataset_full) - train_size
+    train_size = 0.7
+    val_size = 0.15
+    test_size = 0.15
 
-    # Create dataloaders
+    if args.data_seed != None:
+        print(f"Generating data split with seed {args.data_seed}...")
+        train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+            train_dataset_full, 
+            [train_size, val_size, test_size],
+            generator = torch.Generator().manual_seed(args.data_seed),
+        )
+    else:
+        print("Generating random data split...")
+        train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+            train_dataset_full, 
+            [train_size, val_size, test_size],
+        )
+    
+    os.makedirs("dataloaders", exist_ok=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    torch.save(test_loader, "dataloaders/testloader.pt")
 
     # Create optimizer and scheduler
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -275,20 +307,25 @@ def test_model(model, args):
     else:
         device = torch.device('cpu')
 
-    # Create dataset
-    test_dataset = FloodDataset(
-        img_dir=os.path.join(args.data_dir, 'train', 'images'),
-        mask_dir=os.path.join(args.data_dir, 'train', 'labels'),
-    )
+    # # Create dataset
+    # test_dataset = FloodDataset(
+    #     img_dir=os.path.join(args.data_dir, 'train', 'images'),
+    #     mask_dir=os.path.join(args.data_dir, 'train', 'labels'),
+    # )
 
-    # Create dataloader
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+    # # Create dataloader
+    # test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+    test_loader = torch.load("dataloaders/testloader.pt", weights_only=False)
 
     # Set model to evaluation mode
     model.eval()
 
     # Create directory for saving predictions
     os.makedirs(args.output_dir, exist_ok=True)
+
+    test_loss = 0.0
+    test_dice = 0.0
 
     with torch.no_grad():
         for idx, (images, masks) in enumerate(test_loader):
@@ -298,66 +335,77 @@ def test_model(model, args):
             outputs = model(images)
 
             # Create binary prediction
-            binary_preds = (outputs > 0.01).float()
+            #binary_preds = (outputs > 0.01).float()
+            binary_preds = (outputs > 0.5).float()
             # print(outputs.min(), outputs.max(), binary_preds.min(), binary_preds.max())
 
-            # Save prediction visualization
-            if idx < args.num_visualizations:
-                # Convert tensors to numpy arrays
-                image = images.cpu().numpy()[0]
-                pred = outputs.cpu().numpy()[0, 0]
-                mask = masks.cpu().numpy()[0, 0]
-                binary_pred = binary_preds.cpu().numpy()[0, 0]
+            loss = bce_dice_loss(outputs, masks)
+            dice = dice_coefficient(outputs, masks)
+            test_loss += loss.item()
+            test_dice += dice.item()
 
-                # Create RGB visualization using bands 0, 1, 2
-                rgb_image = np.stack([
-                    image[0],  # Red channel (band 0)
-                    image[1],  # Green channel (band 1)
-                    image[2]   # Blue channel (band 2)
-                ], axis=2)
+            for i in range(len(images)):
+                # Save prediction visualization
+                if idx*args.batch_size + i < args.num_visualizations:
+                    # Convert tensors to numpy arrays
+                    image = images.cpu().numpy()[0]
+                    pred = outputs.cpu().numpy()[0, 0]
+                    mask = masks.cpu().numpy()[0, 0]
+                    binary_pred = binary_preds.cpu().numpy()[0, 0]
 
-                # Clip values to [0, 1] range
-                rgb_image = np.clip(rgb_image, 0, 1)
+                    # Create RGB visualization using bands 0, 1, 2
+                    rgb_image = np.stack([
+                        image[0],  # Red channel (band 0)
+                        image[1],  # Green channel (band 1)
+                        image[2]   # Blue channel (band 2)
+                    ], axis=2)
 
-                # Create figure with 3 subplots
-                fig, axes = plt.subplots(2, 2, figsize=(15, 5))
+                    # Clip values to [0, 1] range
+                    rgb_image = np.clip(rgb_image, 0, 1)
 
-                # Plot RGB image
-                axes[0, 0].imshow(rgb_image)
-                axes[0, 0].set_title("RGB Image (Bands 0,1,2)")
-                axes[0, 0].axis('off')
-                
-                # Plot ground truth mask
-                axes[0, 1].imshow(mask, cmap='Blues')
-                axes[0, 1].set_title("Ground Truth")
-                axes[0, 1].axis('off')
+                    # Create figure with 3 subplots
+                    fig, axes = plt.subplots(2, 2, figsize=(15, 5))
 
-                # Plot probability prediction
-                axes[1, 0].imshow(pred, cmap='plasma')
-                axes[1, 0].set_title("Prediction (Probability)")
-                axes[1, 0].axis('off')
+                    # Plot RGB image
+                    axes[0, 0].imshow(rgb_image)
+                    axes[0, 0].set_title("RGB Image (Bands 0,1,2)")
+                    axes[0, 0].axis('off')
+                    
+                    # Plot ground truth mask
+                    axes[0, 1].imshow(mask, cmap='Blues')
+                    axes[0, 1].set_title("Ground Truth")
+                    axes[0, 1].axis('off')
 
-                # Plot binary prediction
-                axes[1, 1].imshow(binary_pred, cmap='Blues')
-                axes[1, 1].set_title("Binary Prediction")
-                axes[1, 1].axis('off')
+                    # Plot probability prediction
+                    axes[1, 0].imshow(pred, cmap='plasma')
+                    axes[1, 0].set_title("Prediction (Probability)")
+                    axes[1, 0].axis('off')
 
-                plt.tight_layout()
-                plt.savefig(os.path.join(args.output_dir, f"prediction_{idx}.png"))
-                plt.close()
+                    # Plot binary prediction
+                    axes[1, 1].imshow(binary_pred, cmap='Blues')
+                    axes[1, 1].set_title("Binary Prediction")
+                    axes[1, 1].axis('off')
 
-                # Save the binary prediction as a mask
-                # binary_mask = (binary_pred * 255).astype(np.uint8)
-                # io.imsave(os.path.join(args.output_dir, f"mask_{idx}.png"), binary_mask)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(args.output_dir, f"prediction_{idx}.png"))
+                    plt.close()
 
-            if (idx + 1) % 10 == 0:
-                print(f"Processed {idx + 1}/{len(test_loader)} test images")
+                    # Save the binary prediction as a mask
+                    # binary_mask = (binary_pred * 255).astype(np.uint8)
+                    # io.imsave(os.path.join(args.output_dir, f"mask_{idx}.png"), binary_mask)
+
+                if (idx*args.batch_size + i) % 10 == 0:
+                    print(f"Processed {idx*args.batch_size + i}/{len(test_loader) * args.batch_size} test images")
+    test_loss /= len(test_loader)
+    test_dice /= len(test_loader)
+    print(f"Test Loss: {test_loss:.4f}, Test Dice: {test_dice:.4f}")
 
     print(f"Testing complete! Predictions saved to {args.output_dir}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train U-Net for flood mapping")
     parser.add_argument("--data-dir", type=str, default="../flood_data", help="Path to data directory")
+    parser.add_argument("--data-seed", type=int, help="Seed to generate a random train/val/test split, random if not set")
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs to train")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
