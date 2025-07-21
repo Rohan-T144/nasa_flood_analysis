@@ -98,13 +98,13 @@ Ensure you have access to a CUDA-capable GPU or Apple M1/M2 GPU for best perform
 For Spiking U-Net:
 
 ```bash
-python train_flood_snn.py --data-dir ../flood_data --batch-size 4 --epochs 50 --lr 1e-4 --timesteps 4 --save-dir snn_checkpoints
+python train_flood_snn.py --data-dir ../flood_data --batch-size 4 --epochs 50 --lr 1e-4 --timesteps 4 --save-dir snn_checkpoints --data-seed 0
 ```
 
 For ANN baseline (U-Net):
 
 ```bash
-python train_flood_ann.py --data-dir ../flood_data --batch-size 4 --epochs 50 --lr 1e-4 --save-dir ann_checkpoints --data-seed 0
+python train_flood_ann.py --data-dir ../flood_data --batch-size 16 --epochs 50 --lr 1e-4 --save-dir ann_checkpoints --data-seed 0
 ```
 
 **Key Arguments:**
