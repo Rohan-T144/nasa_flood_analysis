@@ -150,14 +150,15 @@ def train_model(args):
             train_dataset_full, 
             [train_size, val_size, test_size],
         )
+        
+    os.makedirs(args.save_dir, exist_ok=True)
+    #os.makedirs("dataloaders", exist_ok=True)
     
-    os.makedirs("dataloaders", exist_ok=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-    torch.save(test_loader, "dataloaders/testloader.pt")
+    torch.save(test_loader, os.path.join(args.save_dir, "testloader.pt"))
 
-    os.makedirs(args.save_dir, exist_ok=True)
     
     # THIS IS FOR ADDING POS_WEIGHT TO BCE LOSS, NOT YET IMPLEMENTED
     # WOULD NEED TO CHANGE MODEL TO OUTPUT LOGITS AND USE BCEWITHLOGITS
@@ -193,40 +194,40 @@ def train_model(args):
             
             # --- SNN Forward Pass ---
             # The model's forward pass handles the timesteps internally
-            # outputs = model(images)
+            outputs = model(images)
 
-            if (batch_idx + 1) % 10 == 0:
-                outputs, spike_outputs = model(images, return_spikes=True)
+            # if (batch_idx + 1) % 10 == 0:
+            #     outputs, spike_outputs = model(images, return_spikes=True)
 
-                print("--- Layer-wise Spike Rate Analysis ---")
-                def print_spike_rate(tensor, name="Layer"):
-                    # tensor shape: [T, Batch, Channels, H, W]
-                    num_spikes = torch.sum(tensor > 0).item()
-                    num_neurons = tensor.numel() / tensor.shape[0] # Total neurons in the batch
-                    avg_spikes_per_neuron = num_spikes / num_neurons
+            #     print("--- Layer-wise Spike Rate Analysis ---")
+            #     def print_spike_rate(tensor, name="Layer"):
+            #         # tensor shape: [T, Batch, Channels, H, W]
+            #         num_spikes = torch.sum(tensor > 0).item()
+            #         num_neurons = tensor.numel() / tensor.shape[0] # Total neurons in the batch
+            #         avg_spikes_per_neuron = num_spikes / num_neurons
                     
-                    # Firing rate as a percentage of timesteps
-                    firing_rate_percent = (avg_spikes_per_neuron / tensor.shape[0]) * 100
+            #         # Firing rate as a percentage of timesteps
+            #         firing_rate_percent = (avg_spikes_per_neuron / tensor.shape[0]) * 100
                     
-                    print(f"{name}: Avg Spikes/Neuron = {avg_spikes_per_neuron:.4f} | Firing Rate = {firing_rate_percent:.2f}%")
-                for name, spikes in spike_outputs.items():
-                    print_spike_rate(spikes.detach(), name=name)
-            else:
-                outputs = model(images)
+            #         print(f"{name}: Avg Spikes/Neuron = {avg_spikes_per_neuron:.4f} | Firing Rate = {firing_rate_percent:.2f}%")
+            #     for name, spikes in spike_outputs.items():
+            #         print_spike_rate(spikes.detach(), name=name)
+            # else:
+            #     outputs = model(images)
             
             loss = bce_dice_loss(outputs, masks)
             loss.backward()
 
-            # --- Gradient Check ---
-            total_norm = 0
-            for p in model.parameters():
-                if p.grad is not None:
-                    param_norm = p.grad.data.norm(2)
-                    total_norm += param_norm.item() ** 2
-            total_norm = total_norm ** 0.5
-            if (batch_idx + 1) % 10 == 0:
-                print(f"Gradient Norm: {total_norm:.4f}")
-            # --- End Gradient Check ---
+            # # --- Gradient Check ---
+            # total_norm = 0
+            # for p in model.parameters():
+            #     if p.grad is not None:
+            #         param_norm = p.grad.data.norm(2)
+            #         total_norm += param_norm.item() ** 2
+            # total_norm = total_norm ** 0.5
+            # if (batch_idx + 1) % 10 == 0:
+            #     print(f"Gradient Norm: {total_norm:.4f}")
+            # # --- End Gradient Check ---
 
             optimizer.step()
             
@@ -316,7 +317,8 @@ def test_model(model, args):
     # )
     # test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
-    test_loader = torch.load("dataloaders/testloader.pt", weights_only=False)
+    save_dir = os.path.dirname(args.model_path)
+    test_loader = torch.load(os.path.join(save_dir, "testloader.pt"), weights_only=False)
 
     model.eval()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -405,9 +407,12 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, default="snn_predictions", help="Directory to save predictions")
     parser.add_argument("--num-visualizations", type=int, default=10, help="Number of predictions to visualize")
     parser.add_argument("--test-only", action="store_true", help="Only run testing, no training")
-    parser.add_argument("--model-path", type=str, default="snn_checkpoints/snn_unet_best.pth", help="Path to model for testing")
+    parser.add_argument("--model-path", type=str, help="Path to model for testing")
     
     args = parser.parse_args()
+
+    if args.model_path is None:
+        args.model_path = f"{args.save_dir}/snn_unet_best.pth"
     
     if torch.mps.is_available():
         device = torch.device('mps')
@@ -428,5 +433,10 @@ if __name__ == "__main__":
             print(f"Loaded model from {args.model_path}")
             test_model(model, args)
     else:
+        # save args
+        os.makedirs(args.save_dir, exist_ok=True)
+        with open(os.path.join(args.save_dir, "args.json"), "w") as f:
+            json.dump(vars(args), f, indent=4)
+    
         model = train_model(args)
         test_model(model, args)

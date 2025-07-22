@@ -164,11 +164,16 @@ def train_model(args):
             [train_size, val_size, test_size],
         )
     
-    os.makedirs("dataloaders", exist_ok=True)
+    # Create directory for saving models
+    os.makedirs(args.save_dir, exist_ok=True)
+    # os.makedirs("dataloaders", exist_ok=True)
+
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-    torch.save(test_loader, "dataloaders/testloader.pt")
+    # torch.save(test_loader, "dataloaders/testloader.pt")
+    torch.save(test_loader, os.path.join(args.save_dir, "testloader.pt"))
+
 
     # Create optimizer and scheduler
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -180,8 +185,7 @@ def train_model(args):
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         print("Loaded optimizer and scheduler states")
 
-    # Create directory for saving models
-    os.makedirs(args.save_dir, exist_ok=True)
+    
 
     # Training loop
     for epoch in range(start_epoch, start_epoch + args.epochs):
@@ -317,7 +321,9 @@ def test_model(model, args):
     # # Create dataloader
     # test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
-    test_loader = torch.load("dataloaders/testloader.pt", weights_only=False)
+    # test_loader = torch.load("dataloaders/testloader.pt", weights_only=False)
+    save_dir = os.path.dirname(args.model_path)
+    test_loader = torch.load(os.path.join(save_dir, "testloader.pt"), weights_only=False)
 
     # Set model to evaluation mode
     model.eval()
@@ -349,10 +355,10 @@ def test_model(model, args):
                 # Save prediction visualization
                 if idx*args.batch_size + i < args.num_visualizations:
                     # Convert tensors to numpy arrays
-                    image = images.cpu().numpy()[0]
-                    pred = outputs.cpu().numpy()[0, 0]
-                    mask = masks.cpu().numpy()[0, 0]
-                    binary_pred = binary_preds.cpu().numpy()[0, 0]
+                    image = images.cpu().numpy()[i]
+                    pred = outputs.cpu().numpy()[i, 0]
+                    mask = masks.cpu().numpy()[i, 0]
+                    binary_pred = binary_preds.cpu().numpy()[i, 0]
 
                     # Create RGB visualization using bands 0, 1, 2
                     rgb_image = np.stack([
@@ -388,7 +394,7 @@ def test_model(model, args):
                     axes[1, 1].axis('off')
 
                     plt.tight_layout()
-                    plt.savefig(os.path.join(args.output_dir, f"prediction_{idx}.png"))
+                    plt.savefig(os.path.join(args.output_dir, f"ann_prediction_{idx*args.batch_size + i}.png"))
                     plt.close()
 
                     # Save the binary prediction as a mask
@@ -427,6 +433,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if args.model_path is None:
+        args.model_path = f"{args.save_dir}/ann_unet_best.pth"
+
     if args.test_only and args.model_path:
         # Load model for testing
         # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -443,7 +452,7 @@ if __name__ == "__main__":
         # Handle both new checkpoint format and old format (model_state_dict only)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
-            print(f"Loaded model from checkpoint (epoch {checkpoint['epoch']})")
+            print(f"Loaded model from {args.model_path},checkpoint (epoch {checkpoint['epoch']})")
         else:
             model.load_state_dict(checkpoint)
             print(f"Loaded model weights from {args.model_path}")
@@ -451,6 +460,10 @@ if __name__ == "__main__":
         model = model.to(device)
         test_model(model, args)
     else:
+        # save args
+        os.makedirs(args.save_dir, exist_ok=True)
+        with open(os.path.join(args.save_dir, "args.json"), "w") as f:
+            json.dump(vars(args), f, indent=4)
         # Train model
         model = train_model(args)
         # Test the trained model
