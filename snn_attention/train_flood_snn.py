@@ -88,6 +88,36 @@ def bce_dice_loss(pred, target, bce_weight=0.5):
     dice = 1 - dice_coefficient(pred, target)
     return bce_weight * bce + (1 - bce_weight) * dice
 
+def calculate_iou(pred, target, threshold=0.5):
+    """
+    Calculates IoU for binary segmentation.
+    """
+    # Apply sigmoid and threshold to get binary predictions
+    # pred_prob = torch.sigmoid(pred_logits)
+    pred_mask = (pred > threshold) # Convert to 0s and 1s
+
+    pred_mask = pred_mask.view(-1)
+    target = target.view(-1)
+
+    pred_mask = pred_mask.to(torch.uint8)
+    target = target.to(torch.uint8)
+
+    # For binary case (num_classes=1), we calculate IoU for the positive class (class 1)
+    # This assumes the target mask is also 0s and 1s.
+    intersection = (pred_mask & target).sum().item()
+    union = (pred_mask | target).sum().item()
+    
+    if union == 0:
+        # If there is no ground truth or prediction for the positive class,
+        # it can be considered a perfect match (IoU=1) or nan.
+        # Returning nan is safer to indicate the case.
+        iou = float('nan')
+    else:
+        iou = intersection / union
+        
+    # Since it's binary, we return the single IoU score.
+    return torch.tensor(iou)
+
 # --- Main Training and Testing Functions ---
 def train_model(args):
     if torch.backends.mps.is_available():
@@ -325,6 +355,7 @@ def test_model(model, args):
 
     test_loss = 0.0
     test_dice = 0.0
+    test_iou = 0.0
 
     with torch.no_grad():
         for idx, (images, masks) in enumerate(test_loader):
@@ -342,8 +373,10 @@ def test_model(model, args):
 
             loss = bce_dice_loss(outputs, masks)
             dice = dice_coefficient(outputs, masks)
+            iou = calculate_iou(outputs, masks)
             test_loss += loss.item()
             test_dice += dice.item()
+            test_iou += iou.item()
 
             # if idx*args.batch_size + i < args.num_visualizations:
             for i in range(len(images)):
@@ -382,9 +415,10 @@ def test_model(model, args):
     
     test_loss /= len(test_loader)
     test_dice /= len(test_loader)
-    print(f"Test Loss: {test_loss:.4f}, Test Dice: {test_dice:.4f}")
+    test_iou /= len(test_loader)
+    print(f"Test Loss: {test_loss:.4f}, Test Dice: {test_dice:.4f}, Test IoU: {test_iou:.4f}")
     
-    metrics = {"test loss" : test_loss, "test dice" : test_dice}
+    metrics = {"test loss" : test_loss, "test dice" : test_dice, "test_iou" : test_iou}
     with open(os.path.join(args.output_dir, "metrics.json"), "w") as json_file:
         json.dump(metrics, json_file, indent=4)
     
