@@ -1,6 +1,12 @@
-# NASA Beyond the Algorithm Challenge: Flood Mapping with SNN & Attention
+# NEO-FLOOD: Flood Mapping with SNN & Attention
 
-This repository provides code and documentation for a neuromorphic approach to satellite flood mapping, developed for the NASA Beyond the Algorithm Challenge. The solution leverages spiking neural networks (SNNs) with attention mechanisms, inspired by recent advances in unconventional and brain-inspired computing for Earth science and disaster resilience.
+This repository provides preliminary code and documentation for a neuromorphic approach to satellite flood mapping, developed for the NASA Beyond the Algorithm Challenge. The solution leverages spiking neural networks (SNNs) with attention mechanisms, inspired by recent advances in unconventional and brain-inspired computing for Earth science and disaster resilience.
+
+This repo provides a MVP of the neuromorphic algorithm described in our white paper, designed as a proof-of-concept to test our architecture. 
+
+Examples of features not yet implemented here are: 
+- **Normalized Integer Leaky Integrate-and-Fire (NI-LIF) Neurons**: This repo utilizes tradtional LIF Neurons.
+- **Pre-loaded Digital Elevation Model (DEM)**: The data used here does not include pre-flood images.
 
 ## Table of Contents
 
