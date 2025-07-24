@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
 Trains a Spiking U-Net with self-attention for flood mapping using PyTorch and SpikingJelly.
-Based on the Spike2Former architecture, this script implements a spiking neural network (SNN) for semantic segmentation tasks.
-Spike2Former: https://github.com/BICLab/Spike2Former/tree/main
 """
 import argparse
 import os
